@@ -207,6 +207,80 @@ class DbApiHook(BaseHook):
         """
         return self.get_conn().cursor()
 
+    def bulk_insert(self, table, rows, target_fields=None, insert_every=5000,
+                    insert_to_commit_rate=2):
+        """
+        A generic method to combile insert_every records into a single insert
+        statement, a new transaction is created every
+        (insert_every * insert_to_commit_rate) rows.
+
+        :param table: Name of the target table
+        :type table: str
+        :param rows: The rows to insert into the table
+        :type rows: iterable of tuples
+        :param target_fields: The names of the columns to fill in the table
+        :type target_fields: iterable of strings
+        :param insert_every: The maximum number of rows to insert in one
+            insert query. Set to 0 to insert all rows in one transaction.
+        :type insert_every: int
+        :param insert_to_commit_rate: Number of inserts after the commit
+            should happen. This can be set to 1 to commit for every insert.
+        :type insert_to_commit_rate: int
+        """
+        commit_every = insert_to_commit_rate * insert_every
+
+        if target_fields:
+            target_fields = ", ".join(target_fields)
+            target_fields = "({})".format(target_fields)
+        else:
+            target_fields = ''
+
+        assert isinstance(rows, (list, tuple))
+
+        with closing(self.get_conn()) as conn:
+            if self.supports_autocommit:
+                self.set_autocommit(conn, False)
+
+            conn.commit()
+            row_size = len(rows[0])
+            with closing(conn.cursor()) as cur:
+                offset = 0
+                while offset < len(rows):
+                    data = rows[offset: offset + commit_every]
+
+                    # Make placehoulders
+                    # I.e: If the data is [[1, 2, 3], [3, 4, 5]]
+                    # Placehoulder is: (%s, %s, %s), (%s, %s, %s)
+                    placeholders = ",".join([
+                        "({0})".format(",".join(["%s", ] * row_size))
+                        for i in range(len(data))
+                    ])
+
+                    # All the values are packed into a single tuple as they are
+                    # positional.
+                    vals = tuple([
+                        self._serialize_cell(cell, conn)
+                        for row in data for cell in row
+                    ])
+                    sql = "INSERT INTO {0} {1} VALUES {2};".format(
+                        table,
+                        target_fields,
+                        placeholders)
+                    cur.execute(sql, vals)
+
+                    # Commit as per commit_every number of records.
+                    if commit_every and offset % commit_every == 0:
+                        conn.commit()
+                        self.log.info(
+                            "Loaded {count} into {table} rows so far".format(
+                                count=(offset + len(data)), table=table)
+                        )
+                    offset += insert_every
+
+        self.log.info(
+            "Done loading. Loaded a total of {i} rows".format(i=len(rows))
+        )
+
     def insert_rows(self, table, rows, target_fields=None, commit_every=1000,
                     replace=False):
         """

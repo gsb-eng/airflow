@@ -97,6 +97,134 @@ class TestDbApiHook(unittest.TestCase):
         for row in rows:
             self.cur.execute.assert_any_call(sql, row)
 
+    def test_bulk_insert(self):
+        # bulk_insert default case, without passing custom numbers for
+        # commit_every, insert_every
+        table = "table"
+        rows = [(1, 2)] * 22
+
+        self.db_hook.bulk_insert(table, rows)
+
+        self.conn.close.assert_called_once()
+        self.cur.close.assert_called_once()
+
+        commit_count = 2  # Including the first commit
+        execute_count = 1  # All the records should be executed once.
+        self.assertEqual(commit_count, self.conn.commit.call_count)
+        self.assertEqual(execute_count, self.cur.execute.call_count)
+
+    def test_bulk_insert_to_commit_rate_case1(self):
+        # Case-1: Committing more records than inserting records.
+        table = "table"
+        rows = [(1, 2)] * 22
+        insert_to_commit_rate, insert_every = 2, 5
+
+        self.db_hook.bulk_insert(
+            table,
+            rows,
+            insert_to_commit_rate=insert_to_commit_rate,
+            insert_every=insert_every)
+
+        self.conn.close.assert_called_once()
+        self.cur.close.assert_called_once()
+
+        commit_count = 4  # Including the first commit
+        self.assertEqual(commit_count, self.conn.commit.call_count)
+
+    def test_bulk_insert_to_commit_rate_case2(self):
+        # Case-2: Committing all the records at once.
+        table = "table"
+        rows = [(1, 2)] * 22
+
+        # Committing few records each time
+        insert_to_commit_rate = 1
+
+        self.db_hook.bulk_insert(
+            table,
+            rows,
+            insert_to_commit_rate=insert_to_commit_rate)
+
+        self.conn.close.assert_called_once()
+        self.cur.close.assert_called_once()
+
+        commit_count = 2  # Including the first commit
+        self.assertEqual(commit_count, self.conn.commit.call_count)
+
+    def test_bulk_insert_insert_every_case1(self):
+        # Case-1: Committing less records than total records.
+        table = "table"
+        rows = [(1, 2)] * 22
+        insert_every = 5
+
+        self.db_hook.bulk_insert(
+            table,
+            rows,
+            insert_every=insert_every)
+
+        self.conn.close.assert_called_once()
+        self.cur.close.assert_called_once()
+
+        execute_count = 5  # 22 records -> 5, 5, 5, 5, 2 -> total 5 executes
+        self.assertEqual(execute_count, self.cur.execute.call_count)
+
+    def test_bulk_insert_insert_every_case2(self):
+        # Case-2: Inserting all the records at once
+        table = "table"
+        rows = [(1, 2)] * 22
+        insert_every = 30
+
+        self.db_hook.bulk_insert(
+            table,
+            rows,
+            insert_every=insert_every)
+
+        self.conn.close.assert_called_once()
+        self.cur.close.assert_called_once()
+
+        execute_count = 1
+        self.assertEqual(execute_count, self.cur.execute.call_count)
+
+    def test_bulk_insert_insert_every_case3(self):
+        # Case-3: Inserting single row once
+        table = "table"
+        rows = [(1, 2)] * 22
+        insert_every = 1
+
+        self.db_hook.bulk_insert(
+            table,
+            rows,
+            insert_every=insert_every)
+
+        self.conn.close.assert_called_once()
+        self.cur.close.assert_called_once()
+
+        execute_count, commit_count = 22, 12
+        self.assertEqual(execute_count, self.cur.execute.call_count)
+        self.assertEqual(commit_count, self.conn.commit.call_count)
+
+    def test_bulk_insert_target_fields(self):
+        table = "table"
+        rows = [(1, 2)] * 22
+        target_fields = ["field1", "field2"]
+
+        # committing everything at once
+        insert_to_commit_rate, insert_every = 1, 30
+
+        self.db_hook.bulk_insert(
+            table,
+            rows,
+            target_fields=target_fields,
+            insert_to_commit_rate=insert_to_commit_rate,
+            insert_every=insert_every)
+
+        self.conn.close.assert_called_once()
+        self.cur.close.assert_called_once()
+
+        commit_count = 2  # The first and last commit
+        execute_count = 1  # All the records should be executed once.
+        self.assertEqual(commit_count, self.conn.commit.call_count)
+        self.assertEqual(execute_count, self.cur.execute.call_count)
+
     def test_insert_rows_replace(self):
         table = "table"
         rows = [("hello",),
