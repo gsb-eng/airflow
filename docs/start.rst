@@ -31,7 +31,10 @@ The installation is quick and straightforward.
     pip install apache-airflow
 
     # initialize the database
-    airflow initdb
+    airflow db init
+
+    # if you build with master
+    airflow users -c --username admin --firstname Peter --lastname Parker --role Admin --email spiderman@superhero.org
 
     # start the web server, default port is 8080
     airflow webserver -p 8080
@@ -39,7 +42,8 @@ The installation is quick and straightforward.
     # start the scheduler
     airflow scheduler
 
-    # visit localhost:8080 in the browser and enable the example dag in the home page
+    # visit localhost:8080 in the browser and use the admin account you just
+    # created to login. Enable the example dag in the home page
 
 Upon running these commands, Airflow will create the ``$AIRFLOW_HOME`` folder
 and lay an "airflow.cfg" file with defaults that get you going fast. You can
@@ -62,9 +66,9 @@ run the commands below.
 .. code-block:: bash
 
     # run your first task instance
-    airflow run example_bash_operator runme_0 2015-01-01
+    airflow tasks run example_bash_operator runme_0 2015-01-01
     # run a backfill over 2 days
-    airflow backfill example_bash_operator -s 2015-01-01 -e 2015-01-02
+    airflow dags backfill example_bash_operator -s 2015-01-01 -e 2015-01-02
 
 What's Next?
 ''''''''''''

@@ -29,7 +29,7 @@ from airflow.ti_deps.deps.task_concurrency_dep import TaskConcurrencyDep
 from airflow.utils.state import State
 
 
-class DepContext(object):
+class DepContext:
     """
     A base class for contexts that specifies which dependencies should be evaluated in
     the context for a task instance to satisfy the requirements of the context. Also
@@ -37,6 +37,7 @@ class DepContext(object):
 
     For example there could be a SomeRunContext that subclasses this class which has
     dependencies for:
+
     - Making sure there are slots available on the infrastructure to run the task instance
     - A task-instance's task-specific dependencies are met (e.g. the previous task
       instance completed successfully)

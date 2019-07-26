@@ -69,7 +69,7 @@ class ExternalTaskSensor(BaseSensorOperator):
                  check_existence=False,
                  *args,
                  **kwargs):
-        super(ExternalTaskSensor, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.allowed_states = allowed_states or [State.SUCCESS]
         if external_task_id:
             if not set(self.allowed_states) <= set(State.task_states):
@@ -111,10 +111,9 @@ class ExternalTaskSensor(BaseSensorOperator):
             [datetime.isoformat() for datetime in dttm_filter])
 
         self.log.info(
-            'Poking for '
-            '{self.external_dag_id}.'
-            '{self.external_task_id} on '
-            '{} ... '.format(serialized_dttm_filter, **locals()))
+            'Poking for %s.%s on %s ... ',
+            self.external_dag_id, self.external_task_id, serialized_dttm_filter
+        )
 
         DM = DagModel
         TI = TaskInstance

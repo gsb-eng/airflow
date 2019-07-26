@@ -51,6 +51,21 @@ class PubSubTopicCreateOperator(BaseOperator):
 
     Both ``project`` and ``topic`` are templated so you can use
     variables in them.
+
+    :param project: the GCP project ID where the topic will be created
+    :type project: str
+    :param topic: the topic to create. Do not include the
+        full topic path. In other words, instead of
+        ``projects/{project}/topics/{topic}``, provide only
+        ``{topic}``. (templated)
+    :type topic: str
+    :param gcp_conn_id: The connection ID to use connecting to
+        Google Cloud Platform.
+    :type gcp_conn_id: str
+    :param delegate_to: The account to impersonate, if any.
+        For this to work, the service account making the request
+        must have domain-wide delegation enabled.
+    :type delegate_to: str
     """
     template_fields = ['project', 'topic']
     ui_color = '#0273d4'
@@ -65,23 +80,7 @@ class PubSubTopicCreateOperator(BaseOperator):
             delegate_to=None,
             *args,
             **kwargs):
-        """
-        :param project: the GCP project ID where the topic will be created
-        :type project: str
-        :param topic: the topic to create. Do not include the
-            full topic path. In other words, instead of
-            ``projects/{project}/topics/{topic}``, provide only
-            ``{topic}``. (templated)
-        :type topic: str
-        :param gcp_conn_id: The connection ID to use connecting to
-            Google Cloud Platform.
-        :type gcp_conn_id: str
-        :param delegate_to: The account to impersonate, if any.
-            For this to work, the service account making the request
-            must have domain-wide delegation enabled.
-        :type delegate_to: str
-        """
-        super(PubSubTopicCreateOperator, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
         self.project = project
         self.topic = topic
@@ -186,7 +185,7 @@ class PubSubSubscriptionCreateOperator(BaseOperator):
             must have domain-wide delegation enabled.
         :type delegate_to: str
         """
-        super(PubSubSubscriptionCreateOperator, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
         self.topic_project = topic_project
         self.topic = topic
@@ -265,7 +264,7 @@ class PubSubTopicDeleteOperator(BaseOperator):
             must have domain-wide delegation enabled.
         :type delegate_to: str
         """
-        super(PubSubTopicDeleteOperator, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
         self.project = project
         self.topic = topic
@@ -341,7 +340,7 @@ class PubSubSubscriptionDeleteOperator(BaseOperator):
             must have domain-wide delegation enabled.
         :type delegate_to: str
         """
-        super(PubSubSubscriptionDeleteOperator, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
         self.project = project
         self.subscription = subscription
@@ -419,7 +418,7 @@ class PubSubPublishOperator(BaseOperator):
             must have domain-wide delegation enabled.
         :type delegate_to: str
         """
-        super(PubSubPublishOperator, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
         self.gcp_conn_id = gcp_conn_id
         self.delegate_to = delegate_to

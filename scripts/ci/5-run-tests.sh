@@ -64,8 +64,8 @@ fi
 
 if [ -z "$KUBERNETES_VERSION" ]; then
   echo "Initializing the DB"
-  yes | airflow initdb
-  yes | airflow resetdb
+  yes | airflow db init
+  yes | airflow db reset
 fi
 
 if [ -z "$nose_args" ]; then
@@ -78,7 +78,7 @@ if [ -z "$nose_args" ]; then
   --rednose \
   --with-timer \
   -v \
-  --logging-level=DEBUG"
+  --logging-level=INFO"
 fi
 
 if [ -z "$KUBERNETES_VERSION" ]; then

@@ -25,11 +25,7 @@ from airflow.hooks.base_hook import BaseHook
 from requests import exceptions as requests_exceptions
 from requests.auth import AuthBase
 from time import sleep
-
-try:
-    from urllib import parse as urlparse
-except ImportError:
-    import urlparse
+from six.moves.urllib import parse as urlparse
 
 RESTART_CLUSTER_ENDPOINT = ("POST", "api/2.0/clusters/restart")
 START_CLUSTER_ENDPOINT = ("POST", "api/2.0/clusters/start")
@@ -114,15 +110,20 @@ class DatabricksHook(BaseHook):
         :rtype: dict
         """
         method, endpoint = endpoint_info
-        url = 'https://{host}/{endpoint}'.format(
-            host=self._parse_host(self.databricks_conn.host),
-            endpoint=endpoint)
+
         if 'token' in self.databricks_conn.extra_dejson:
-            self.log.info('Using token auth.')
+            self.log.info('Using token auth. ')
             auth = _TokenAuth(self.databricks_conn.extra_dejson['token'])
+            host = self._parse_host(self.databricks_conn.extra_dejson['host'])
         else:
-            self.log.info('Using basic auth.')
+            self.log.info('Using basic auth. ')
             auth = (self.databricks_conn.login, self.databricks_conn.password)
+            host = self.databricks_conn.host
+
+        url = 'https://{host}/{endpoint}'.format(
+            host=self._parse_host(host),
+            endpoint=endpoint)
+
         if method == 'GET':
             request_func = requests.get
         elif method == 'POST':

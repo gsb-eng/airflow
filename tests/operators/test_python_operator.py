@@ -17,15 +17,12 @@
 # specific language governing permissions and limitations
 # under the License.
 
-from __future__ import print_function, unicode_literals
-
 import copy
 import logging
 import os
 import unittest
-from datetime import timedelta
+from datetime import timedelta, date
 
-from airflow import configuration
 from airflow.exceptions import AirflowException
 from airflow.models import TaskInstance as TI, DAG, DagRun
 from airflow.operators.dummy_operator import DummyOperator
@@ -46,18 +43,35 @@ TI_CONTEXT_ENV_VARS = ['AIRFLOW_CTX_DAG_ID',
                        'AIRFLOW_CTX_DAG_RUN_ID']
 
 
+class Call:
+    def __init__(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
+
+
+def build_recording_function(calls_collection):
+    """
+    We can not use a Mock instance as a PythonOperator callable function or some tests fail with a
+    TypeError: Object of type Mock is not JSON serializable
+    Then using this custom function recording custom Call objects for further testing
+    (replacing Mock.assert_called_with assertion method)
+    """
+    def recording_function(*args, **kwargs):
+        calls_collection.append(Call(*args, **kwargs))
+    return recording_function
+
+
 class PythonOperatorTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        super(PythonOperatorTest, cls).setUpClass()
+        super().setUpClass()
 
         with create_session() as session:
             session.query(DagRun).delete()
             session.query(TI).delete()
 
     def setUp(self):
-        super(PythonOperatorTest, self).setUp()
-        configuration.load_test_config()
+        super().setUp()
         self.dag = DAG(
             'test_dag',
             default_args={
@@ -69,7 +83,7 @@ class PythonOperatorTest(unittest.TestCase):
         self.addCleanup(self.clear_run)
 
     def tearDown(self):
-        super(PythonOperatorTest, self).tearDown()
+        super().tearDown()
 
         with create_session() as session:
             session.query(DagRun).delete()
@@ -113,6 +127,77 @@ class PythonOperatorTest(unittest.TestCase):
                 python_callable=not_callable,
                 task_id='python_operator',
                 dag=self.dag)
+
+    def _assertCallsEqual(self, first, second):
+        self.assertIsInstance(first, Call)
+        self.assertIsInstance(second, Call)
+        self.assertTupleEqual(first.args, second.args)
+        self.assertDictEqual(first.kwargs, second.kwargs)
+
+    def test_python_callable_arguments_are_templatized(self):
+        """Test PythonOperator op_args are templatized"""
+        recorded_calls = []
+
+        task = PythonOperator(
+            task_id='python_operator',
+            # a Mock instance cannot be used as a callable function or test fails with a
+            # TypeError: Object of type Mock is not JSON serializable
+            python_callable=(build_recording_function(recorded_calls)),
+            op_args=[
+                4,
+                date(2019, 1, 1),
+                "dag {{dag.dag_id}} ran on {{ds}}."
+            ],
+            dag=self.dag)
+
+        self.dag.create_dagrun(
+            run_id='manual__' + DEFAULT_DATE.isoformat(),
+            execution_date=DEFAULT_DATE,
+            start_date=DEFAULT_DATE,
+            state=State.RUNNING
+        )
+        task.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
+
+        self.assertEqual(1, len(recorded_calls))
+        self._assertCallsEqual(
+            recorded_calls[0],
+            Call(4,
+                 date(2019, 1, 1),
+                 "dag {} ran on {}.".format(self.dag.dag_id, DEFAULT_DATE.date().isoformat()))
+        )
+
+    def test_python_callable_keyword_arguments_are_templatized(self):
+        """Test PythonOperator op_kwargs are templatized"""
+        recorded_calls = []
+
+        task = PythonOperator(
+            task_id='python_operator',
+            # a Mock instance cannot be used as a callable function or test fails with a
+            # TypeError: Object of type Mock is not JSON serializable
+            python_callable=(build_recording_function(recorded_calls)),
+            op_kwargs={
+                'an_int': 4,
+                'a_date': date(2019, 1, 1),
+                'a_templated_string': "dag {{dag.dag_id}} ran on {{ds}}."
+            },
+            dag=self.dag)
+
+        self.dag.create_dagrun(
+            run_id='manual__' + DEFAULT_DATE.isoformat(),
+            execution_date=DEFAULT_DATE,
+            start_date=DEFAULT_DATE,
+            state=State.RUNNING
+        )
+        task.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
+
+        self.assertEqual(1, len(recorded_calls))
+        self._assertCallsEqual(
+            recorded_calls[0],
+            Call(an_int=4,
+                 a_date=date(2019, 1, 1),
+                 a_templated_string="dag {} ran on {}.".format(
+                     self.dag.dag_id, DEFAULT_DATE.date().isoformat()))
+        )
 
     def test_python_operator_shallow_copy_attr(self):
         not_callable = lambda x: x
@@ -161,7 +246,7 @@ class PythonOperatorTest(unittest.TestCase):
 class BranchOperatorTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        super(BranchOperatorTest, cls).setUpClass()
+        super().setUpClass()
 
         with create_session() as session:
             session.query(DagRun).delete()
@@ -178,7 +263,7 @@ class BranchOperatorTest(unittest.TestCase):
         self.branch_2 = DummyOperator(task_id='branch_2', dag=self.dag)
 
     def tearDown(self):
-        super(BranchOperatorTest, self).tearDown()
+        super().tearDown()
 
         with create_session() as session:
             session.query(DagRun).delete()
@@ -335,14 +420,14 @@ class BranchOperatorTest(unittest.TestCase):
 class ShortCircuitOperatorTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        super(ShortCircuitOperatorTest, cls).setUpClass()
+        super().setUpClass()
 
         with create_session() as session:
             session.query(DagRun).delete()
             session.query(TI).delete()
 
     def tearDown(self):
-        super(ShortCircuitOperatorTest, self).tearDown()
+        super().tearDown()
 
         with create_session() as session:
             session.query(DagRun).delete()
@@ -421,7 +506,7 @@ class ShortCircuitOperatorTest(unittest.TestCase):
         upstream.set_downstream(short_op)
         dag.clear()
 
-        logging.error("Tasks {}".format(dag.tasks))
+        logging.error("Tasks %s", dag.tasks)
         dr = dag.create_dagrun(
             run_id="manual__",
             start_date=timezone.utcnow(),

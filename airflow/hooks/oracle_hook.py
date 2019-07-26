@@ -20,8 +20,6 @@
 import cx_Oracle
 
 from airflow.hooks.dbapi_hook import DbApiHook
-from builtins import str
-from past.builtins import basestring
 from datetime import datetime
 import numpy
 
@@ -152,7 +150,7 @@ class OracleHook(DbApiHook):
             i += 1
             lst = []
             for cell in row:
-                if isinstance(cell, basestring):
+                if isinstance(cell, str):
                     lst.append("'" + str(cell).replace("'", "''") + "'")
                 elif cell is None:
                     lst.append('NULL')
@@ -175,11 +173,11 @@ class OracleHook(DbApiHook):
             cur.execute(sql)
             if i % commit_every == 0:
                 conn.commit()
-                self.log.info('Loaded {i} into {table} rows so far'.format(**locals()))
+                self.log.info('Loaded %s into %s rows so far', i, table)
         conn.commit()
         cur.close()
         conn.close()
-        self.log.info('Done loading. Loaded a total of {i} rows'.format(**locals()))
+        self.log.info('Done loading. Loaded a total of %s rows', i)
 
     def bulk_insert_rows(self, table, rows, target_fields=None, commit_every=5000):
         """
@@ -199,13 +197,15 @@ class OracleHook(DbApiHook):
             Default 5000. Set greater than 0. Set 1 to insert each row in each transaction
         :type commit_every: int
         """
+        if not rows:
+            raise ValueError("parameter rows could not be None or empty iterable")
         conn = self.get_conn()
         cursor = conn.cursor()
-        values = ', '.join(':%s' % i for i in range(1, len(target_fields) + 1))
-        prepared_stm = 'insert into {tablename} ({columns}) values ({values})'.format(
+        values_base = target_fields if target_fields else rows[0]
+        prepared_stm = 'insert into {tablename} {columns} values ({values})'.format(
             tablename=table,
-            columns=', '.join(target_fields),
-            values=values,
+            columns='({})'.format(', '.join(target_fields)) if target_fields else '',
+            values=', '.join(':%s' % i for i in range(1, len(values_base) + 1)),
         )
         row_count = 0
         # Chunk the rows

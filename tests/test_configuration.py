@@ -17,23 +17,15 @@
 # specific language governing permissions and limitations
 # under the License.
 
-from __future__ import print_function
-from __future__ import unicode_literals
-
-import os
 import contextlib
+import os
+import warnings
 from collections import OrderedDict
-
-import six
 
 from airflow import configuration
 from airflow.configuration import conf, AirflowConfigParser, parameterized_config
 
-if six.PY2:
-    # Need `assertWarns` back-ported from unittest2
-    import unittest2 as unittest
-else:
-    import unittest
+import unittest
 
 
 @contextlib.contextmanager
@@ -59,7 +51,6 @@ class ConfTest(unittest.TestCase):
     def setUpClass(cls):
         os.environ['AIRFLOW__TESTSECTION__TESTKEY'] = 'testvalue'
         os.environ['AIRFLOW__TESTSECTION__TESTPERCENT'] = 'with%percent'
-        configuration.load_test_config()
         conf.set('core', 'percent', 'with%%inside')
 
     @classmethod
@@ -139,6 +130,14 @@ class ConfTest(unittest.TestCase):
         self.assertEqual(cfg_dict['testsection']['testpercent'], 'with%%percent')
         self.assertEqual(cfg_dict['core']['percent'], 'with%%inside')
 
+    def test_conf_as_dict_exclude_env(self):
+        # test display_sensitive
+        cfg_dict = conf.as_dict(include_env=False, display_sensitive=True)
+
+        # Since testsection is only created from env vars, it shouldn't be
+        # present at all if we don't ask for env vars to be included.
+        self.assertNotIn('testsection', cfg_dict)
+
     def test_command_precedence(self):
         TEST_CONFIG = '''[test]
 key1 = hello
@@ -184,6 +183,12 @@ key6 = value6
         cfg_dict = test_conf.as_dict(display_sensitive=True)
         self.assertEqual('cmd_result', cfg_dict['test']['key2'])
         self.assertNotIn('key2_cmd', cfg_dict['test'])
+
+        # If we exclude _cmds then we should still see the commands to run, not
+        # their values
+        cfg_dict = test_conf.as_dict(include_cmds=False, display_sensitive=True)
+        self.assertNotIn('key4', cfg_dict['test'])
+        self.assertEqual('printf key4_result', cfg_dict['test']['key4_cmd'])
 
     def test_getboolean(self):
         """Test AirflowConfigParser.getboolean"""
@@ -246,6 +251,16 @@ key2 = 1.23
         self.assertTrue(isinstance(test_conf.getfloat('valid', 'key2'), float))
         self.assertEqual(1.23, test_conf.getfloat('valid', 'key2'))
 
+    def test_has_option(self):
+        TEST_CONFIG = '''[test]
+key1 = value1
+'''
+        test_conf = AirflowConfigParser()
+        test_conf.read_string(TEST_CONFIG)
+        self.assertTrue(test_conf.has_option('test', 'key1'))
+        self.assertFalse(test_conf.has_option('test', 'key_not_exists'))
+        self.assertFalse(test_conf.has_option('section_not_exists', 'key1'))
+
     def test_remove_option(self):
         TEST_CONFIG = '''[test]
 key1 = hello
@@ -301,7 +316,7 @@ key3 = value3
         self.assertTrue(isinstance(section_dict['visibility_timeout'], int))
         self.assertTrue(isinstance(section_dict['_test_only_bool'], bool))
         self.assertTrue(isinstance(section_dict['_test_only_float'], float))
-        self.assertTrue(isinstance(section_dict['_test_only_string'], six.string_types))
+        self.assertTrue(isinstance(section_dict['_test_only_string'], str))
 
     def test_deprecated_options(self):
         # Guarantee we have a deprecated setting, so we test the deprecation
@@ -339,3 +354,40 @@ key3 = value3
             self.assertEqual(conf.getint('celery', 'result_backend'), 99)
             if tmp:
                 os.environ['AIRFLOW__CELERY__RESULT_BACKEND'] = tmp
+
+    def test_deprecated_values(self):
+        def make_config():
+            test_conf = AirflowConfigParser(default_config='')
+            # Guarantee we have a deprecated setting, so we test the deprecation
+            # lookup even if we remove this explicit fallback
+            test_conf.deprecated_values = {
+                'core': {
+                    'task_runner': ('BashTaskRunner', 'StandardTaskRunner', '2.0'),
+                },
+            }
+            test_conf.read_dict({
+                'core': {
+                    'executor': 'SequentialExecutor',
+                    'task_runner': 'BashTaskRunner',
+                    'sql_alchemy_conn': 'sqlite://',
+                },
+            })
+            return test_conf
+
+        with self.assertWarns(FutureWarning):
+            test_conf = make_config()
+            self.assertEqual(test_conf.get('core', 'task_runner'), 'StandardTaskRunner')
+
+        with self.assertWarns(FutureWarning):
+            with env_vars(AIRFLOW__CORE__TASK_RUNNER='BashTaskRunner'):
+                test_conf = make_config()
+
+                self.assertEqual(test_conf.get('core', 'task_runner'), 'StandardTaskRunner')
+
+        with warnings.catch_warnings(record=True) as w:
+            with env_vars(AIRFLOW__CORE__TASK_RUNNER='NotBashTaskRunner'):
+                test_conf = make_config()
+
+                self.assertEqual(test_conf.get('core', 'task_runner'), 'NotBashTaskRunner')
+
+                self.assertListEqual([], w)

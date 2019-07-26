@@ -60,7 +60,7 @@ class WinRMOperator(BaseOperator):
                  timeout=10,
                  *args,
                  **kwargs):
-        super(WinRMOperator, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.winrm_hook = winrm_hook
         self.ssh_conn_id = ssh_conn_id
         self.remote_host = remote_host
@@ -84,7 +84,7 @@ class WinRMOperator(BaseOperator):
         winrm_client = self.winrm_hook.get_conn()
 
         try:
-            self.log.info("Running command: '{command}'...".format(command=self.command))
+            self.log.info("Running command: '%s'...", self.command)
             command_id = self.winrm_hook.winrm_protocol.run_command(
                 winrm_client,
                 self.command

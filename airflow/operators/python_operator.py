@@ -23,15 +23,13 @@ import pickle
 import subprocess
 import sys
 import types
-from builtins import str
 from textwrap import dedent
+from typing import Optional, Iterable, Dict, Callable
 
 import dill
-import six
 
 from airflow.exceptions import AirflowException
-from airflow.models import BaseOperator
-from airflow.models.skipmixin import SkipMixin
+from airflow.models import BaseOperator, SkipMixin
 from airflow.utils.decorators import apply_defaults
 from airflow.utils.file import TemporaryDirectory
 from airflow.utils.operator_helpers import context_to_airflow_vars
@@ -49,10 +47,10 @@ class PythonOperator(BaseOperator):
     :type python_callable: python callable
     :param op_kwargs: a dictionary of keyword arguments that will get unpacked
         in your function
-    :type op_kwargs: dict
+    :type op_kwargs: dict (templated)
     :param op_args: a list of positional arguments that will get unpacked when
         calling your callable
-    :type op_args: list
+    :type op_args: list (templated)
     :param provide_context: if set to true, Airflow will pass a set of
         keyword arguments that can be used in your function. This set of
         kwargs correspond exactly to what you can use in your jinja
@@ -68,8 +66,7 @@ class PythonOperator(BaseOperator):
         processing templated fields, for examples ``['.sql', '.hql']``
     :type templates_exts: list[str]
     """
-    template_fields = ('templates_dict',)
-    template_ext = tuple()
+    template_fields = ('templates_dict', 'op_args', 'op_kwargs')
     ui_color = '#ffefeb'
 
     # since we won't mutate the arguments, we should just do the shallow copy
@@ -78,15 +75,17 @@ class PythonOperator(BaseOperator):
 
     @apply_defaults
     def __init__(
-            self,
-            python_callable,
-            op_args=None,
-            op_kwargs=None,
-            provide_context=False,
-            templates_dict=None,
-            templates_exts=None,
-            *args, **kwargs):
-        super(PythonOperator, self).__init__(*args, **kwargs)
+        self,
+        python_callable: Callable,
+        op_args: Optional[Iterable] = None,
+        op_kwargs: Optional[Dict] = None,
+        provide_context: bool = False,
+        templates_dict: Optional[Dict] = None,
+        templates_exts: Optional[Iterable[str]] = None,
+        *args,
+        **kwargs
+    ):
+        super().__init__(*args, **kwargs)
         if not callable(python_callable):
             raise AirflowException('`python_callable` param must be callable')
         self.python_callable = python_callable
@@ -100,7 +99,7 @@ class PythonOperator(BaseOperator):
     def execute(self, context):
         # Export context to make it available for callables to use.
         airflow_context_vars = context_to_airflow_vars(context, in_env_var_format=True)
-        self.log.info("Exporting the following env vars:\n" +
+        self.log.info("Exporting the following env vars:\n%s",
                       '\n'.join(["{}={}".format(k, v)
                                  for k, v in airflow_context_vars.items()]))
         os.environ.update(airflow_context_vars)
@@ -130,38 +129,10 @@ class BranchPythonOperator(PythonOperator, SkipMixin):
     these paths can't move forward. The ``skipped`` states are propagated
     downstream to allow for the DAG state to fill up and the DAG run's state
     to be inferred.
-
-    Note that using tasks with ``depends_on_past=True`` downstream from
-    ``BranchPythonOperator`` is logically unsound as ``skipped`` status
-    will invariably lead to block tasks that depend on their past successes.
-    ``skipped`` states propagates where all directly upstream tasks are
-    ``skipped``.
     """
     def execute(self, context):
-        branch = super(BranchPythonOperator, self).execute(context)
-        if isinstance(branch, six.string_types):
-            branch = [branch]
-        self.log.info("Following branch %s", branch)
-        self.log.info("Marking other directly downstream tasks as skipped")
-
-        downstream_tasks = context['task'].downstream_list
-        self.log.debug("Downstream task_ids %s", downstream_tasks)
-
-        if downstream_tasks:
-            # Also check downstream tasks of the branch task. In case the task to skip
-            # is a downstream task of the branch task, we exclude it from skipping.
-            branch_downstream_task_ids = set()
-            for b in branch:
-                branch_downstream_task_ids.update(context["dag"].
-                                                  get_task(b).
-                                                  get_flat_relative_ids(upstream=False))
-            skip_tasks = [t
-                          for t in downstream_tasks
-                          if t.task_id not in branch and
-                          t.task_id not in branch_downstream_task_ids]
-            self.skip(context['dag_run'], context['ti'].execution_date, skip_tasks)
-
-        self.log.info("Done.")
+        branch = super().execute(context)
+        self.skip_all_except(context['ti'], branch)
 
 
 class ShortCircuitOperator(PythonOperator, SkipMixin):
@@ -177,7 +148,7 @@ class ShortCircuitOperator(PythonOperator, SkipMixin):
     The condition is determined by the result of `python_callable`.
     """
     def execute(self, context):
-        condition = super(ShortCircuitOperator, self).execute(context)
+        condition = super().execute(context)
         self.log.info("Condition result is %s", condition)
 
         if condition:
@@ -229,6 +200,12 @@ class PythonVirtualenvOperator(PythonOperator):
     :type op_kwargs: list
     :param op_kwargs: A dict of keyword arguments to pass to python_callable.
     :type op_kwargs: dict
+    :param provide_context: if set to true, Airflow will pass a set of
+        keyword arguments that can be used in your function. This set of
+        kwargs correspond exactly to what you can use in your jinja
+        templates. For this to work, you need to define `**kwargs` in your
+        function header.
+    :type provide_context: bool
     :param string_args: Strings that are present in the global var virtualenv_string_args,
         available to python_callable at runtime as a list[str]. Note that args are split
         by newline.
@@ -243,19 +220,29 @@ class PythonVirtualenvOperator(PythonOperator):
     :type templates_exts: list[str]
     """
     @apply_defaults
-    def __init__(self, python_callable,
-                 requirements=None,
-                 python_version=None, use_dill=False,
-                 system_site_packages=True,
-                 op_args=None, op_kwargs=None, string_args=None,
-                 templates_dict=None, templates_exts=None, *args, **kwargs):
-        super(PythonVirtualenvOperator, self).__init__(
+    def __init__(
+        self,
+        python_callable: Callable,
+        requirements: Optional[Iterable[str]] = None,
+        python_version: Optional[str] = None,
+        use_dill: bool = False,
+        system_site_packages: bool = True,
+        op_args: Iterable = None,
+        op_kwargs: Dict = None,
+        provide_context: bool = False,
+        string_args: Optional[Iterable[str]] = None,
+        templates_dict: Optional[Dict] = None,
+        templates_exts: Optional[Iterable[str]] = None,
+        *args,
+        **kwargs
+    ):
+        super().__init__(
             python_callable=python_callable,
             op_args=op_args,
             op_kwargs=op_kwargs,
             templates_dict=templates_dict,
             templates_exts=templates_exts,
-            provide_context=False,
+            provide_context=provide_context,
             *args,
             **kwargs)
         self.requirements = requirements or []
@@ -319,40 +306,40 @@ class PythonVirtualenvOperator(PythonOperator):
 
     def _execute_in_subprocess(self, cmd):
         try:
-            self.log.info("Executing cmd\n{}".format(cmd))
+            self.log.info("Executing cmd\n%s", cmd)
             output = subprocess.check_output(cmd,
                                              stderr=subprocess.STDOUT,
                                              close_fds=True)
             if output:
-                self.log.info("Got output\n{}".format(output))
+                self.log.info("Got output\n%s", output)
         except subprocess.CalledProcessError as e:
-            self.log.info("Got error output\n{}".format(e.output))
+            self.log.info("Got error output\n%s", e.output)
             raise
 
     def _write_string_args(self, filename):
         # writes string_args to a file, which are read line by line
-        with open(filename, 'w') as f:
-            f.write('\n'.join(map(str, self.string_args)))
+        with open(filename, 'w') as file:
+            file.write('\n'.join(map(str, self.string_args)))
 
     def _write_args(self, input_filename):
         # serialize args to file
         if self._pass_op_args():
-            with open(input_filename, 'wb') as f:
+            with open(input_filename, 'wb') as file:
                 arg_dict = ({'args': self.op_args, 'kwargs': self.op_kwargs})
                 if self.use_dill:
-                    dill.dump(arg_dict, f)
+                    dill.dump(arg_dict, file)
                 else:
-                    pickle.dump(arg_dict, f)
+                    pickle.dump(arg_dict, file)
 
     def _read_result(self, output_filename):
         if os.stat(output_filename).st_size == 0:
             return None
-        with open(output_filename, 'rb') as f:
+        with open(output_filename, 'rb') as file:
             try:
                 if self.use_dill:
-                    return dill.load(f)
+                    return dill.load(file)
                 else:
-                    return pickle.load(f)
+                    return pickle.load(file)
             except ValueError:
                 self.log.error("Error deserializing result. "
                                "Note that result deserialization "
@@ -360,10 +347,10 @@ class PythonVirtualenvOperator(PythonOperator):
                 raise
 
     def _write_script(self, script_filename):
-        with open(script_filename, 'w') as f:
+        with open(script_filename, 'w') as file:
             python_code = self._generate_python_code()
-            self.log.debug('Writing code to file\n{}'.format(python_code))
-            f.write(python_code)
+            self.log.debug('Writing code to file\n', python_code)
+            file.write(python_code)
 
     def _generate_virtualenv_cmd(self, tmp_dir):
         cmd = ['virtualenv', tmp_dir]
@@ -396,7 +383,7 @@ class PythonVirtualenvOperator(PythonOperator):
         fn = self.python_callable
         # dont try to read pickle if we didnt pass anything
         if self._pass_op_args():
-            load_args_line = 'with open(sys.argv[1], "rb") as f: arg_dict = {}.load(f)'\
+            load_args_line = 'with open(sys.argv[1], "rb") as file: arg_dict = {}.load(file)'\
                 .format(pickling_library)
         else:
             load_args_line = 'arg_dict = {"args": [], "kwargs": {}}'
@@ -410,12 +397,12 @@ class PythonVirtualenvOperator(PythonOperator):
         {load_args_code}
         args = arg_dict["args"]
         kwargs = arg_dict["kwargs"]
-        with open(sys.argv[3], 'r') as f:
-            virtualenv_string_args = list(map(lambda x: x.strip(), list(f)))
+        with open(sys.argv[3], 'r') as file:
+            virtualenv_string_args = list(map(lambda x: x.strip(), list(file)))
         {python_callable_lines}
         res = {python_callable_name}(*args, **kwargs)
-        with open(sys.argv[2], 'wb') as f:
-            res is not None and {pickling_library}.dump(res, f)
+        with open(sys.argv[2], 'wb') as file:
+            res is not None and {pickling_library}.dump(res, file)
         """).format(load_args_code=load_args_line,
                     python_callable_lines=dedent(inspect.getsource(fn)),
                     python_callable_name=fn.__name__,
